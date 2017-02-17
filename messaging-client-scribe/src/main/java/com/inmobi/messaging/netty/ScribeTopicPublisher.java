@@ -25,6 +25,8 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.locks.ReentrantLock;
 
+import com.inmobi.messaging.publisher.PintailException;
+import com.inmobi.messaging.publisher.SendFailedException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.jboss.netty.bootstrap.ClientBootstrap;
@@ -152,16 +154,16 @@ public class ScribeTopicPublisher {
     senderThread.start();
   }
 
-  protected void publish(final Message m) {
+  protected void publish(final Message m) throws PintailException {
     addToSend(m);
     trySending(true);
   }
 
-  protected boolean addToSend(final Message m) {
+  protected boolean addToSend(final Message m) throws PintailException {
     if (!toBeSent.offer(m)) {
       LOG.warn("Messages to be sent Queue is full," + " dropping the message");
       stats.accumulateOutcomeWithDelta(Outcome.LOST, 0);
-      return false;
+      throw new SendFailedException("Queue is full");
     }
     return true;
   }
@@ -303,7 +305,11 @@ public class ScribeTopicPublisher {
     if (resendOnAckLost) {
       Message m = null;
       while ((m = toBeAcked.poll()) != null) {
-        addToSend(m);
+        try {
+          addToSend(m);
+        } catch (PintailException e) {
+          LOG.error("send failed for unacked message", e);
+        }
       }
     } else {
       if (toBeAcked.size() > 0) {
@@ -344,7 +350,7 @@ public class ScribeTopicPublisher {
     NettyEventCore.getInstance().releaseFactory();
   }
 
-  void ack(final ResultCode success) {
+  void ack(final ResultCode success) throws PintailException {
     // first check the result code. If it is success, then increment the
     // success counter and remove the message from ack queue, if configured
     if (success.getValue() == 0) {
